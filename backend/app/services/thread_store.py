@@ -432,7 +432,8 @@ async def reset_session(
     thread.provider_session_id = new_session_id
     thread.session_state = "new" if new_session_id is not None else "none"
     # The engine's own conversation id belongs to the old session.
-    thread.provider_state = None
+    selected_profile = (thread.provider_state or {}).get("account_profile")
+    thread.provider_state = {key: value for key, value in (thread.provider_state or {}).items() if key in {"account_profile", "effort"}} if selected_profile else None
     # Set here, in Python: left to the database's onupdate it would be expired
     # after the commit and unreadable once the session is closed.
     thread.updated_at = utcnow()

@@ -99,6 +99,7 @@ async def create_thread(payload: ThreadCreateRequest, rt: ThreadRuntime = Depend
             provider=payload.provider if "provider" in payload.model_fields_set else None,
             model=payload.model,
             effort=payload.effort,
+            account_profile=payload.account_profile,
             title=payload.title,
             agent_id=payload.agent_id,
         )

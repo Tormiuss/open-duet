@@ -70,3 +70,7 @@ class Thread(Base):
     @property
     def effort(self) -> str | None:
         return (self.provider_state or {}).get('effort') if isinstance(self.provider_state, dict) else None
+
+    @property
+    def account_profile(self) -> str | None:
+        return (self.provider_state or {}).get('account_profile') if isinstance(self.provider_state, dict) else None

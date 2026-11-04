@@ -363,6 +363,7 @@ export function Sidebar({
               <span className="font-medium">{t("sidebar.routines")}</span>
             </button>
           )}
+          <Link href="/operations/" className={cn(ROW, "hover:bg-hover/60")}>Personal operations</Link>
           <Link href="/apps/" className={cn(ROW, "hover:bg-hover/60")}>
             <LayoutGrid size={16} aria-hidden="true" className="shrink-0 text-muted" />
             <span className="font-medium">{t("sidebar.apps")}</span>

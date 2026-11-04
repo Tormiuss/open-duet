@@ -53,6 +53,7 @@ from app.core import app_settings
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services import cli_probe, composio_bridge, community_mcp_bridge, local_claude_runner, memory_bridge
+from app.services.personal_operations import codex_command
 from app.services.local_approval_broker import MAX_REVIEWABLE_INPUT_CHARS
 from app.services.local_claude_stream import summarize_tool
 from app.services.provider_adapter import (
@@ -287,7 +288,7 @@ class CodexAdapter:
             return self._models[1]
         rpc = None
         try:
-            rpc = await StdioRpc.spawn([str(exe), "app-server"], cwd=os.path.expanduser("~"), max_bytes=4_000_000)
+            rpc = await StdioRpc.spawn(codex_command(exe), cwd=os.path.expanduser("~"), max_bytes=4_000_000)
 
             async def ask():
                 await rpc.request("initialize", {"clientInfo": {"name": "open-dots", "version": "0"}})
@@ -307,8 +308,9 @@ class CodexAdapter:
             label = item.get("displayName") if isinstance(item.get("displayName"), str) else item["id"]
             default_effort = item.get("defaultReasoningEffort") or item.get("default_reasoning_effort")
             efforts = item.get("supportedReasoningEfforts") or item.get("supported_reasoning_efforts") or ()
-            if isinstance(efforts, list):
-                efforts = tuple(efforts)
+            if isinstance(efforts, (list, tuple)):
+                efforts = tuple(value if isinstance(value, str) else value.get("reasoningEffort", value.get("reasoning_effort")) for value in efforts if isinstance(value, (str, dict)))
+                efforts = tuple(value for value in efforts if isinstance(value, str))
             model_id = item["id"].lower()
             if not efforts and any(p in model_id for p in ("o1", "o3-mini", "o3", "o4")):
                 efforts = ("low", "medium", "high")
@@ -408,7 +410,7 @@ class _CodexTurn:
         from app.core import turn_sandbox
         try:
             self.rpc = await StdioRpc.spawn(
-                [str(self.exe), "app-server"],
+                codex_command(self.exe),
                 cwd=str(self.workspace),
                 max_bytes=self.max_text * RAW_STREAM_SIZE_FACTOR,
                 sandbox=True,
@@ -495,6 +497,19 @@ class _CodexTurn:
             from app.services.routine_uninterrupted import TOOL_NOTE
             instructions = f"{instructions}\n\n{TOOL_NOTE}" if instructions else TOOL_NOTE
         launch = self.ctx.memory_launch
+        from app.services.personal_operations import enabled as personal_enabled
+        if personal_enabled():
+            try:
+                current = await self._call("config/read", {"includeLayers": False, "cwd": str(self.workspace)})
+                saved = current.get("config") if isinstance(current, dict) else None
+                if not isinstance(saved, dict):
+                    raise ValueError("Codex did not expose its effective tool configuration")
+                theirs = saved.get("mcp_servers") or {}
+                if not isinstance(theirs, dict):
+                    raise ValueError("Codex tool configuration is invalid")
+                common["config"] = {"mcp_servers": {name: {"enabled": False} for name in theirs}}
+            except (RpcError, RpcClosed, asyncio.TimeoutError, ValueError):
+                return self._failed("Codex personal tool isolation could not be confirmed.", "codex_error")
         if self.computer is not None:
             try:
                 common["config"] = await self._computer_config()
@@ -508,6 +523,7 @@ class _CodexTurn:
             common.setdefault("config", {}).setdefault("mcp_servers", {})
             common["config"]["mcp_servers"].update({memory_bridge.SERVER: {
                 "command": launch.command, "args": list(launch.args), "env": dict(launch.env),
+                "enabled": True,
                 # Only the two read-only tools, and Codex does not ask about them (no card).
                 "enabled_tools": list(memory_bridge.TOOLS), "default_tools_approval_mode": "approve",
             }})
@@ -525,6 +541,7 @@ class _CodexTurn:
             team_launch = self.ctx.team_launch
             common.setdefault("config", {}).setdefault("mcp_servers", {})["team"] = {
                 "command": team_launch.command, "args": list(team_launch.args), "env": dict(team_launch.env),
+                "enabled": True,
                 "default_tools_approval_mode": "prompt",
             }
         if self.ctx.composio_launch is not None:

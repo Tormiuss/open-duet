@@ -7,12 +7,12 @@ from app.schemas.computer import ComputerSummary
 
 
 class ThreadCreateRequest(BaseModel):
+    account_profile: Literal["codex-me", "codex-son", "codex-kadi", "claude-main"] | None = None
     # An engine id from GET /api/v1/engines; an unknown one is a 422.
     provider: str = Field(default="claude", min_length=1, max_length=64)
     # What the person asked for; omitted means the engine's default. Checked
     # against the engine (422 `unknown_model`).
     model: str | None = Field(default=None, max_length=200)
-    effort: str | None = Field(default=None, max_length=64)
     effort: str | None = Field(default=None, max_length=64)
     # Omitted: set from the first prompt.
     title: str | None = Field(default=None, max_length=200)
@@ -58,6 +58,7 @@ class ThreadResponse(BaseModel):
     provider: str
     model: str | None
     effort: str | None = None
+    account_profile: str | None = None
     workspace_path: str | None = None
     # The agent this conversation was started from; null if none, or if it
     # was deleted.

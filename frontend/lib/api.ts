@@ -751,6 +751,7 @@ export type AgentExport = {
 };
 
 export type Thread = {
+  account_profile?: string | null;
   id: number;
   // Present once the backend supports named agents; null for a plain chat.
   agent_id?: number | null;
@@ -1130,7 +1131,7 @@ export const api = {
 
   getThread: (threadId: number) => request<ThreadDetail>(`/threads/${threadId}`),
 
-  createThread: (agentId?: number | null, selection?: { provider?: string; model?: string | null; effort?: string | null }) =>
+  createThread: (agentId?: number | null, selection?: { provider?: string; model?: string | null; effort?: string | null; account_profile?: string }) =>
     request<Thread>("/threads", {
       method: "POST",
       body: JSON.stringify({ ...(agentId != null ? { agent_id: agentId } : {}), ...selection }),

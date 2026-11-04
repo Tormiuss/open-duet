@@ -29,6 +29,8 @@ from app.auth.routes import router as auth_router
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/api/v1")
+from app.routers.personal_operations import router as personal_operations_router
+router.include_router(personal_operations_router)
 
 
 @router.get("/health")

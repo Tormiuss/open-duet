@@ -127,6 +127,7 @@ export function ThreadRow({
             <StatusDot status={shown === "reset" ? null : shown} unread={unread} />
           </span>
           <span className="flex items-center gap-1.5 text-xs text-muted">
+            {thread.account_profile && <span className="shrink-0">{thread.account_profile}</span>}
             <span className="shrink-0">{whenLabel(thread.updated_at, t)}</span>
             {agentName ? <span className="min-w-0 truncate">· {agentName}</span> : null}
             {archived ? <span>· {t("sidebar.archivedTag")}</span> : null}

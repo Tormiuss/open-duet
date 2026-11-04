@@ -1,5 +1,7 @@
 # Open Duet
 
+Owner-specific, opt-in customization: [Personal operations setup, capabilities and limits](docs/PERSONAL-OPERATIONS.md). The upstream documentation below describes the wider application; the personal launch profile enables a narrower local configuration.
+
 **Build a team of AI coworkers and choose where they run.**
 
 Open Duet is an open-source workspace for creating named AI agents, giving

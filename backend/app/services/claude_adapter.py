@@ -187,6 +187,9 @@ class ClaudeAdapter:
         MCP servers, no session saved, started in a new empty folder; the
         prompt goes in on stdin. Raises RuntimeError when the CLI fails or does
         not answer in time."""
+        from app.services import personal_operations
+        if personal_operations.enabled():
+            raise RuntimeError("Automatic helper model calls are disabled in the personal operations profile")
         import tempfile
         from pathlib import Path
 

@@ -613,6 +613,7 @@ class ThreadRuntime:
         job_id: int | None = None,
         room_id: int | None = None,
         effort: str | None = None,
+        account_profile: str | None = None,
         db=None,
     ) -> store.Thread:
         """A new thread for this runtime's owner. With `agent_id` the thread is
@@ -633,6 +634,11 @@ class ThreadRuntime:
                 raise AgentProviderMismatch(provider)
             provider = agent.provider
         provider = provider or "claude"
+        from app.services import personal_operations
+        if personal_operations.enabled():
+            account_profile = personal_operations.profile_for(provider, account_profile)
+        elif account_profile is not None:
+            raise ValueError("Named subscription profiles require personal operations configuration")
         adapter = self.adapters.get(provider)
         if adapter is None:
             raise UnknownProvider(provider)
@@ -655,6 +661,7 @@ class ThreadRuntime:
             agent_id=agent.id if agent is not None else None,
             kind=kind, job_id=job_id, room_id=room_id,
             effort=effort,
+            provider_state={"account_profile": account_profile} if account_profile else None,
         )
         if destination_db is not None:
             # The caller owns the transaction, including rollback on failure.
@@ -748,8 +755,14 @@ class ThreadRuntime:
             raise ProviderUnavailable(str(exc)) from None
         snapshot = app_settings.capture()
         config = await self.prepare_adapter(thread.provider, adapter)
-        with app_settings.use(snapshot):
-            status = await self._provider_status(adapter, config)
+        from app.services import personal_operations as personal
+        if personal.enabled():
+            with personal.use_profile(thread.provider, thread.account_profile):
+                with app_settings.use(snapshot):
+                    status = await self._provider_status(adapter, config)
+        else:
+            with app_settings.use(snapshot):
+                status = await self._provider_status(adapter, config)
         if not status.ready:
             raise ProviderUnavailable(status.error or f"{thread.provider} is not ready")
 
@@ -1146,7 +1159,9 @@ class ThreadRuntime:
         # A changed engine configuration is a new status (only a fingerprint of
         # it is kept in memory, never the values).
         fingerprint = hash(json.dumps(config, sort_keys=True, default=str)) if config else None
-        cache_key = (adapter.key, cli.effective_value, cli.error, fingerprint)
+        from app.services import personal_operations
+        profile = personal_operations._profile.get() if personal_operations.enabled() else None
+        cache_key = (adapter.key, cli.effective_value, cli.error, fingerprint, profile)
         cached = self._status_cache.get(cache_key)
         if cached is not None and loop.time() - cached[0] < self.status_ttl:
             return cached[1]
@@ -1207,7 +1222,8 @@ class ThreadRuntime:
                         run.memory_before = memory_journal.snapshot(run.agent_id)
                     except Exception:  # noqa: BLE001
                         logger.exception("could not note the memory files", turn_id=run.turn_id)
-                if run.agent_id is not None and run.log_memory and capabilities_of(adapter).can_search_history:
+                from app.services import personal_operations
+                if capabilities_of(adapter).can_search_history and ((run.agent_id is not None and run.log_memory) or personal_operations.enabled()):
                     memory_bridge = MemoryBridge(self, run)
                     run.ctx.memory_launch = memory_bridge.launch
                     memory_bridge.start()
@@ -1316,17 +1332,33 @@ class ThreadRuntime:
             self.notices.spawn(self.notices.after_turn(run, outcome))
 
     async def _run_adapter(self, run: ActiveRun, adapter: ProviderAdapter) -> TurnOutcome:
-        with app_settings.use(run.settings_snapshot):
-            run.adapter_task = asyncio.ensure_future(adapter.run_turn(run.ctx, run.recorder, run.gate))
         try:
-            return await run.adapter_task
+            return await self._run_selected_adapter(run, adapter)
         except asyncio.CancelledError:
             task = asyncio.current_task()
             if not run.stalled or (task is not None and task.cancelling()):
                 raise
-            # The watchdog gave up on an adapter that did not return
-            # after its engine was stopped.
             return TurnOutcome("failed", error_code="engine_stalled")
+
+    async def _run_selected_adapter(self, run: ActiveRun, adapter: ProviderAdapter) -> TurnOutcome:
+        from app.services import personal_operations as personal
+        if personal.enabled():
+            selected = (run.ctx.provider_state or {}).get("account_profile")
+            try:
+                selected = personal.profile_for(run.engine_id, selected)
+                with personal.use_profile(run.engine_id, selected):
+                    await personal.require_subscription(run.engine_id)
+                    personal.reserve_call(f"{self.owner_id}:{run.thread_id}:{run.turn_id}", selected)
+                    with app_settings.use(run.settings_snapshot):
+                        run.adapter_task = asyncio.ensure_future(adapter.run_turn(run.ctx, run.recorder, run.gate))
+                    outcome = await run.adapter_task
+                outcome.provider_state = {**(run.ctx.provider_state or {}), **(outcome.provider_state or {}), "account_profile": selected}
+                return outcome
+            except ValueError as exc:
+                return TurnOutcome("failed", error=str(exc), error_code="personal_admission_refused")
+        with app_settings.use(run.settings_snapshot):
+            run.adapter_task = asyncio.ensure_future(adapter.run_turn(run.ctx, run.recorder, run.gate))
+        return await run.adapter_task
 
     def _limit_of(self, run: ActiveRun, outcome: TurnOutcome):
         if (
@@ -1355,6 +1387,10 @@ class ThreadRuntime:
             return outcome
         label = label_of(adapter, run.engine_id)
         message = engine_errors.describe(label, limit)
+        from app.services import personal_operations
+        if personal_operations.enabled():
+            account = (run.ctx.provider_state or {}).get("account_profile") or personal_operations.profile_for(run.engine_id)
+            return _replace(outcome, error=f"{account}: {message} No automatic account fallback.", error_code=engine_errors.ENGINE_LIMITED)
         self._note_limit(run.engine_id, limit, message)
         limited = _replace(outcome, error=message, error_code=engine_errors.ENGINE_LIMITED)
         if run.accepted:
@@ -1364,7 +1400,8 @@ class ThreadRuntime:
                     "fallback engine (it may have run tools). Check what it did, then send it again."
                 )
             return limited
-        if run.fallback is None or run.switched:
+        from app.services import personal_operations
+        if personal_operations.enabled() or run.fallback is None or run.switched:
             return limited
         fallback_id, fallback_model = run.fallback
         fallback = self.adapters.get(fallback_id)

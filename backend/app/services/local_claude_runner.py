@@ -305,7 +305,8 @@ def _child_env(*, extra_names=(), extra_env=None) -> dict[str, str]:
     env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     # Names this backend, so the next start can end what a hard kill left
     # running (app/core/engine_processes.py).
-    return engine_processes.mark(env)
+    from app.services.personal_operations import subscription_environment
+    return engine_processes.mark(subscription_environment(env))
 
 
 def child_env(*, extra_names=(), extra_env=None) -> dict[str, str]:
